@@ -6,6 +6,15 @@ export const WEATHER_STATION_CONTRACT_ADDRESS =
 
 export const USD_DECIMALS = 8
 
+// ---- Coverage Types -------------------------------------------------
+export enum CoverageType {
+  FLOOD = 0,
+  DROUGHT = 1,
+  WIND = 2,
+  HAIL = 3,
+  MULTI_PERIL = 4,
+}
+
 export const INSURANCE_CONTRACT_ABI = [
   {
     inputs: [
