@@ -15,11 +15,6 @@ export async function GET(request: NextRequest, { params }: { params: { stationI
         wind: weatherRisk.wind_risk,
         drought: weatherRisk.drought_risk,
       },
-      shouldTriggerPayout: {
-        flood: weatherRisk.flood_risk >= 80,
-        wind: weatherRisk.wind_risk >= 80,
-        drought: weatherRisk.drought_risk >= 80,
-      },
       weatherData: {
         temperature: weatherRisk.temperature,
         precipitation_rate: weatherRisk.precipitation_rate,

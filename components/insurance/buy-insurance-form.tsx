@@ -13,6 +13,15 @@ import { Separator } from "@/components/ui/separator"
 import { MapPin, Shield, DollarSign, Calendar, Loader2, CheckCircle } from "lucide-react"
 import { getAllStations, type Station } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
+import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
+import { parseEther } from "viem"
+import { INSURANCE_CONTRACT_ADDRESS, INSURANCE_CONTRACT_ABI, type CoverageType } from "@/lib/contract-config"
+import { useWeb3 } from "@/hooks/use-web3"
+import {
+  Shield,
+  Wallet,
+  TrendingUp,
+} from "lucide-react"
 
 const cropTypes = [
   { value: "corn", label: "Corn", riskMultiplier: 1.0 },
@@ -34,9 +43,19 @@ const coverageTypes = [
 export function BuyInsuranceForm() {
   const [stations, setStations] = useState<Station[]>([])
   const [loading, setLoading] = useState(true)
-  const [submitting, setSubmitting] = useState(false)
   const [step, setStep] = useState(1)
   const { toast } = useToast()
+
+  // Wagmi hooks
+  const { address, isConnected } = useAccount()
+  const {connectWallet} = useWeb3()
+  const { writeContract, data: hash, error: contractError, isPending } = useWriteContract()
+
+  
+
+  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
+    hash,
+  })
 
   // Form data
   const [formData, setFormData] = useState({
@@ -49,6 +68,90 @@ export function BuyInsuranceForm() {
     selectedCoverages: [] as string[],
     duration: "12", // months
   })
+
+  // Calculate premium in ETH
+  const calculatePremiumETH = () => {
+    const coverageAmount = Number.parseFloat(formData.coverageAmount) || 0
+    const basePremiumUSD = calculatePremium() // Your existing calculation
+    // Convert USD to ETH (mock rate - in real app, get from contract)
+    const ethPriceUSD = 2000 // Mock ETH price
+    return (basePremiumUSD / ethPriceUSD).toFixed(6)
+  }
+
+  const handleSubmit = async () => {
+    if (!isConnected) {
+      toast({
+        title: "Wallet Not Connected",
+        description: "Please connect your wallet to create a policy.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    try {
+      const coverageAmountWei = parseEther(formData.coverageAmount)
+      const deductibleWei = parseEther("1000") // 1000 ETH deductible (adjust as needed)
+      const premiumWei = parseEther(calculatePremiumETH())
+
+      // Map coverage types to enum
+      const coverageType: CoverageType = formData.selectedCoverages.includes("flood")
+        ? 0
+        : formData.selectedCoverages.includes("drought")
+          ? 1
+          : formData.selectedCoverages.includes("wind")
+            ? 2
+            : formData.selectedCoverages.includes("hail")
+              ? 3
+              : 4
+
+      // Threshold configuration (adjust based on your needs)
+      const thresholds = {
+        minTemp: -10,
+        maxTemp: 45,
+        minHumidity: 20,
+        maxHumidity: 90,
+        maxWindSpeed: 100,
+        maxPrecipitation: 200,
+      }
+
+      writeContract({
+        address: INSURANCE_CONTRACT_ADDRESS,
+        abi: INSURANCE_CONTRACT_ABI,
+        functionName: "createPolicy",
+        args: [formData.stationId, coverageType, coverageAmountWei, deductibleWei, thresholds],
+        value: premiumWei, // Pay the premium
+      })
+    } catch (error) {
+      console.error("Error creating policy:", error)
+      toast({
+        title: "Error",
+        description: "Failed to create insurance policy. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  // Handle transaction success
+  useEffect(() => {
+    if (isConfirmed) {
+      toast({
+        title: "Policy Created Successfully!",
+        description: `Your insurance policy has been created. Transaction: ${hash}`,
+      })
+      setStep(4) // Success step
+    }
+  }, [isConfirmed, hash, toast])
+
+  // Handle transaction error
+  useEffect(() => {
+    if (contractError) {
+      toast({
+        title: "Transaction Failed",
+        description: contractError.message,
+        variant: "destructive",
+      })
+    }
+  }, [contractError, toast])
 
   useEffect(() => {
     loadStations()
@@ -91,46 +194,6 @@ export function BuyInsuranceForm() {
     return Math.round(finalPremium * 100) / 100
   }
 
-  const handleSubmit = async () => {
-    setSubmitting(true)
-    try {
-      const selectedStationData = stations.find((s) => s.id === formData.stationId)
-
-      const response = await fetch("/api/insurance/buy", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          ...formData,
-          stationName: selectedStationData?.name,
-          location: {lat:selectedStationData.lat, lon:selectedStationData.lon },
-        }),
-      })
-
-      const result = await response.json()
-
-      if (result.success) {
-        toast({
-          title: "Insurance Policy Created!",
-          description: `Policy ${result.policy.id} has been successfully created.`,
-        })
-        setStep(4) // Success step
-      } else {
-        throw new Error(result.error || "Failed to create policy")
-      }
-    } catch (error) {
-      console.error("Error creating policy:", error)
-      toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to create insurance policy. Please try again.",
-        variant: "destructive",
-      })
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
   const selectedStation = stations.find((s) => s.id === formData.stationId)
   console.log(selectedStation)
   const monthlyPremium = calculatePremium()
@@ -145,6 +208,21 @@ export function BuyInsuranceForm() {
           Protect your farm with weather-based crop insurance powered by blockchain
         </p>
       </motion.div>
+       <div className="flex items-center gap-4">
+            {!isConnected ? (
+              <Button onClick={connectWallet} className="bg-gradient-to-r from-blue-600 to-purple-600">
+                <Wallet className="h-4 w-4 mr-2" />
+                Connect Wallet
+              </Button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="border-green-500 text-green-600">
+                  <CheckCircle className="h-3 w-3 mr-1" />
+                  Connected
+                </Badge>
+              </div>
+            )}
+          </div>
 
       {/* Progress Steps */}
       <div className="flex items-center justify-center space-x-4">
@@ -401,11 +479,28 @@ export function BuyInsuranceForm() {
                     <Button variant="outline" onClick={() => setStep(2)} className="flex-1">
                       Back
                     </Button>
-                    <Button onClick={handleSubmit} disabled={submitting} className="flex-1">
-                      {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                      Create Policy
+                    <Button
+                      onClick={handleSubmit}
+                      disabled={isPending || isConfirming || !isConnected}
+                      className="flex-1"
+                    >
+                      {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      {isConfirming && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      {isPending
+                        ? "Confirming Transaction..."
+                        : isConfirming
+                          ? "Waiting for Confirmation..."
+                          : "Create Policy"}
                     </Button>
                   </div>
+                  {hash && (
+                    <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+                      <p className="text-sm font-medium">Transaction Hash:</p>
+                      <p className="text-xs font-mono break-all">{hash}</p>
+                      {isConfirming && <p className="text-sm text-blue-600 mt-1">Waiting for confirmation...</p>}
+                      {isConfirmed && <p className="text-sm text-green-600 mt-1">Transaction confirmed!</p>}
+                    </div>
+                  )}
                 </motion.div>
               )}
 

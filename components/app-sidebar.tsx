@@ -1,7 +1,7 @@
 "use client"
 
 import { motion } from "framer-motion"
-import { Cloud, Database, Globe, History, MapPin, TrendingUp, Zap, Activity } from "lucide-react"
+import { Cloud, Database, Globe, History, MapPin, TrendingUp, Zap, Activity, Shield, FileText } from "lucide-react"
 
 import {
   Sidebar,
@@ -59,6 +59,20 @@ const menuItems = [
     icon: Globe,
     description: "Cell-based insights",
     gradient: "from-indigo-500 to-blue-500",
+  },
+  {
+    id: "insurance",
+    title: "Insurance Platform",
+    icon: Shield,
+    description: "Buy & manage insurance",
+    gradient: "from-emerald-500 to-teal-500",
+  },
+  {
+    id: "my-policies",
+    title: "My Policies",
+    icon: FileText,
+    description: "View your policies",
+    gradient: "from-violet-500 to-purple-500",
   },
 ]
 

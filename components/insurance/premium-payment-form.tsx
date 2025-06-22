@@ -10,6 +10,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { CreditCard, Calendar, DollarSign, Shield, CheckCircle, AlertTriangle, Loader2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import type { InsurancePolicy, PremiumPayment } from "@/lib/insurance-types"
+import { useAccount, useWriteContract, useWaitForTransactionReceipt } from "wagmi"
+import { parseEther } from "viem"
+import { INSURANCE_CONTRACT_ADDRESS, INSURANCE_CONTRACT_ABI } from "@/lib/contract-config"
 
 // Mock data - in real app, this would come from your database
 const mockPolicies: InsurancePolicy[] = [
@@ -20,7 +23,8 @@ const mockPolicies: InsurancePolicy[] = [
     farmerEmail: "john@example.com",
     stationId: "station-1",
     stationName: "Central Valley Station",
-     lat: 40.7128, lon: -74.006 
+    lat: 40.7128,
+    lon: -74.006,
     farmSize: 50,
     cropType: "corn",
     coverageAmount: 100000,
@@ -41,7 +45,8 @@ const mockPolicies: InsurancePolicy[] = [
     farmerEmail: "john@example.com",
     stationId: "station-2",
     stationName: "North Field Station",
-    lat: 41.7128, lon: -75.006 ,
+    lat: 41.7128,
+    lon: -75.006,
     farmSize: 75,
     cropType: "wheat",
     coverageAmount: 150000,
@@ -61,9 +66,108 @@ export function PremiumPaymentForm() {
   const [policies, setPolicies] = useState<InsurancePolicy[]>([])
   const [selectedPolicy, setSelectedPolicy] = useState<string>("")
   const [paymentMethod, setPaymentMethod] = useState<string>("crypto")
-  const [processing, setProcessing] = useState(false)
   const [paymentHistory, setPaymentHistory] = useState<PremiumPayment[]>([])
   const { toast } = useToast()
+
+  // Wagmi hooks
+  const { address, isConnected } = useAccount()
+  const { writeContract, data: hash, error: contractError, isPending } = useWriteContract()
+
+  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
+    hash,
+  })
+
+  const selectedPolicyData = policies.find((p) => p.id === selectedPolicy)
+
+  const handlePayment = async () => {
+    if (!isConnected) {
+      toast({
+        title: "Wallet Not Connected",
+        description: "Please connect your wallet to make a payment.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (!selectedPolicyData) {
+      toast({
+        title: "No Policy Selected",
+        description: "Please select a policy to pay premium for.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    try {
+      // Convert premium amount to ETH (assuming premium is in USD, convert to ETH)
+      const ethPriceUSD = 2000 // Mock ETH price - in real app, get from contract
+      const premiumETH = (selectedPolicyData.premiumAmount / ethPriceUSD).toFixed(6)
+      const premiumWei = parseEther(premiumETH)
+
+      // Extract policy ID number from string (e.g., "POL-001" -> 1)
+      const policyIdNumber = BigInt(selectedPolicyData.id.split("-")[1])
+
+      writeContract({
+        address: INSURANCE_CONTRACT_ADDRESS,
+        abi: INSURANCE_CONTRACT_ABI,
+        functionName: "payPremium",
+        args: [policyIdNumber],
+        value: premiumWei,
+      })
+    } catch (error) {
+      console.error("Payment error:", error)
+      toast({
+        title: "Payment Failed",
+        description: "There was an error processing your payment. Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  // Handle transaction success
+  useEffect(() => {
+    if (isConfirmed && selectedPolicyData) {
+      // Update policy payment date
+      const updatedPolicies = policies.map((p) =>
+        p.id === selectedPolicy
+          ? {
+              ...p,
+              lastPremiumPaid: new Date().toISOString().split("T")[0],
+              totalPremiumsPaid: p.totalPremiumsPaid + p.premiumAmount,
+            }
+          : p,
+      )
+      setPolicies(updatedPolicies)
+
+      // Add to payment history
+      const newPayment: PremiumPayment = {
+        id: `PAY-${Date.now()}`,
+        policyId: selectedPolicy,
+        amount: selectedPolicyData.premiumAmount,
+        paymentDate: new Date().toISOString(),
+        paymentMethod: "crypto",
+        transactionHash: hash,
+        status: "confirmed",
+      }
+      setPaymentHistory([newPayment, ...paymentHistory])
+
+      toast({
+        title: "Payment Successful!",
+        description: `Premium payment of $${selectedPolicyData.premiumAmount} has been processed.`,
+      })
+    }
+  }, [isConfirmed, hash, selectedPolicyData, selectedPolicy, policies, paymentHistory, toast])
+
+  // Handle transaction error
+  useEffect(() => {
+    if (contractError) {
+      toast({
+        title: "Payment Failed",
+        description: contractError.message,
+        variant: "destructive",
+      })
+    }
+  }, [contractError, toast])
 
   useEffect(() => {
     loadPolicies()
@@ -96,8 +200,6 @@ export function PremiumPaymentForm() {
     }
   }
 
-  const selectedPolicyData = policies.find((p) => p.id === selectedPolicy)
-
   const getPaymentStatus = (policy: InsurancePolicy) => {
     const lastPayment = new Date(policy.lastPremiumPaid)
     const now = new Date()
@@ -106,61 +208,6 @@ export function PremiumPaymentForm() {
     if (daysSincePayment > 35) return { status: "overdue", color: "destructive", days: daysSincePayment }
     if (daysSincePayment > 25) return { status: "due", color: "warning", days: daysSincePayment }
     return { status: "current", color: "success", days: daysSincePayment }
-  }
-
-  const handlePayment = async () => {
-    if (!selectedPolicyData) return
-
-    setProcessing(true)
-    try {
-      const response = await fetch("/api/insurance/premium", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          policyId: selectedPolicy,
-          amount: selectedPolicyData.premiumAmount,
-          paymentMethod: paymentMethod,
-        }),
-      })
-
-      const result = await response.json()
-
-      if (result.success) {
-        // Update policy payment date
-        const updatedPolicies = policies.map((p) =>
-          p.id === selectedPolicy
-            ? {
-                ...p,
-                lastPremiumPaid: new Date().toISOString().split("T")[0],
-                totalPremiumsPaid: p.totalPremiumsPaid + p.premiumAmount,
-              }
-            : p,
-        )
-        setPolicies(updatedPolicies)
-
-        // Add to payment history
-        setPaymentHistory([result.payment, ...paymentHistory])
-
-        toast({
-          title: "Payment Successful!",
-          description: `Premium payment of $${selectedPolicyData.premiumAmount} has been processed.`,
-        })
-      } else {
-        throw new Error(result.error || "Payment failed")
-      }
-    } catch (error) {
-      console.error("Payment error:", error)
-      toast({
-        title: "Payment Failed",
-        description:
-          error instanceof Error ? error.message : "There was an error processing your payment. Please try again.",
-        variant: "destructive",
-      })
-    } finally {
-      setProcessing(false)
-    }
   }
 
   return (
@@ -280,10 +327,30 @@ export function PremiumPaymentForm() {
                   </div>
                 </div>
 
-                <Button onClick={handlePayment} disabled={processing} className="w-full h-12">
-                  {processing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {processing ? "Processing Payment..." : `Pay $${selectedPolicyData.premiumAmount}`}
+                <Button
+                  onClick={handlePayment}
+                  disabled={isPending || isConfirming || !isConnected || !selectedPolicy}
+                  className="w-full h-12"
+                >
+                  {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {isConfirming && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {isPending
+                    ? "Confirming Transaction..."
+                    : isConfirming
+                      ? "Waiting for Confirmation..."
+                      : selectedPolicyData
+                        ? `Pay $${selectedPolicyData.premiumAmount}`
+                        : "Select Policy"}
                 </Button>
+
+                {hash && (
+                  <div className="mt-4 p-3 bg-green-50 rounded-lg">
+                    <p className="text-sm font-medium">Transaction Hash:</p>
+                    <p className="text-xs font-mono break-all">{hash}</p>
+                    {isConfirming && <p className="text-sm text-blue-600 mt-1">Waiting for confirmation...</p>}
+                    {isConfirmed && <p className="text-sm text-green-600 mt-1">Payment confirmed!</p>}
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
