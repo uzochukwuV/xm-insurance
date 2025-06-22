@@ -18,9 +18,8 @@ import { parseEther } from "viem"
 import { INSURANCE_CONTRACT_ADDRESS, INSURANCE_CONTRACT_ABI, type CoverageType } from "@/lib/contract-config"
 import { useWeb3 } from "@/hooks/use-web3"
 import {
-  Shield,
+  
   Wallet,
-  TrendingUp,
 } from "lucide-react"
 
 const cropTypes = [
